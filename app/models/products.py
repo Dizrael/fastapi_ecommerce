@@ -21,4 +21,4 @@ class Product(Base):
     category = relationship('Category', back_populates='products')
     reviews = relationship('Review', back_populates='product', cascade='all, delete-orphan')
     ratings = relationship('Rating', back_populates='product', cascade='all, delete-orphan')
-    supplier = relationship('User', back_populates='supplier_products')
+    supplier = relationship('User', back_populates='supplied_products')

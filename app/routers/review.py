@@ -2,6 +2,7 @@ import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import Field
 from sqlalchemy import select, update, insert, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +11,7 @@ from app.models import Product
 from app.models.ratings import Rating
 from app.models.reviews import Review
 from app.routers.auth import get_current_user
+from app.schemas import ReviewInput
 
 router = APIRouter(prefix="/review", tags=["review"])
 
@@ -41,59 +43,55 @@ async def get_products_reviews(
 @router.post("/add_review")
 async def add_review(
         db: Annotated[AsyncSession, Depends(get_db)],
-        review: str,
-        rating: int,
-        get_user: Annotated[dict, Depends(get_current_user)],
-        product_id: int
+        review_data: ReviewInput,  # Используем модель для валидации
+        get_user: Annotated[dict, Depends(get_current_user)]
 ):
     if get_user.get('is_admin') or get_user.get('is_supplier'):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Only customers can add reviews",
         )
-    else:
-        product = await db.scalar(select(Product).where(Product.id == product_id))
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Product not found",
-            )
 
-        # Добавляем рейтинг
-        await db.execute(insert(Rating).values(
-            grade=rating,
-            user_id=get_user.get('id'),
-            product_id=product_id
-        ))
-        await db.commit()
+    # Проверка наличия продукта
+    product = await db.scalar(select(Product).where(Product.id == review_data.product_id))
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found",
+        )
 
-        # Получаем id добавленного рейтинга
-        rating_id = await db.scalar(select(Rating.id).where(and_(
-            Rating.user_id == get_user.get('id'),
-            Rating.product_id == product_id)
-        ))
+    # Логика добавления рейтинга и отзыва
+    await db.execute(insert(Rating).values(
+        grade=review_data.rating,
+        user_id=get_user.get('id'),
+        product_id=review_data.product_id
+    ))
+    await db.commit()
 
-        # Добавляем отзыв
-        await db.execute(insert(Review).values(
-            review=review,
-            rating_id=rating_id,  # Используйте rating_id
-            product_id=product_id,
-            comment_date=datetime.datetime.utcnow(),
-            user_id=get_user.get('id'),
-        ))
-        await db.commit()
+    rating_id = await db.scalar(select(Rating.id).where(and_(
+        Rating.user_id == get_user.get('id'),
+        Rating.product_id == review_data.product_id)
+    ))
 
-        # Пересчитываем средний рейтинг для продукта
-        avg_rating = await db.scalar(select(func.avg(Rating.grade)).where(
-            Rating.product_id == product_id,
-            Rating.is_active == True
-        ))
+    await db.execute(insert(Review).values(
+        comment=review_data.review,
+        rating_id=rating_id,
+        product_id=review_data.product_id,
+        comment_date=datetime.datetime.utcnow(),
+        user_id=get_user.get('id'),
+    ))
+    await db.commit()
 
-        # Обновляем рейтинг продукта
-        await db.execute(update(Product).where(Product.id == product_id).values(rating=avg_rating))
-        await db.commit()
+    # Пересчет рейтинга продукта
+    avg_rating = await db.scalar(select(func.avg(Rating.grade)).where(
+        Rating.product_id == review_data.product_id,
+        Rating.is_active == True
+    ))
 
-        return {"status": status.HTTP_201_CREATED, "detail": "Review added"}
+    await db.execute(update(Product).where(Product.id == review_data.product_id).values(rating=avg_rating))
+    await db.commit()
+
+    return {"status": status.HTTP_201_CREATED, "detail": "Review added"}
 
 
 @router.delete("/delete_reviews")
