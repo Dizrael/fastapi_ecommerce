@@ -1,3 +1,5 @@
+import datetime
+
 from pydantic import BaseModel
 
 
@@ -21,3 +23,13 @@ class CreateUser(BaseModel):
     username: str
     email: str
     password: str
+
+
+class CreateReview(BaseModel):
+    comment: str
+    comment_date: datetime.datetime
+
+
+class CreateRating(BaseModel):
+    grade: int
+
